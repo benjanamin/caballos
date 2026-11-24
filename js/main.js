@@ -7,6 +7,37 @@
 // =========================================================================
 let lastFrameTime = performance.now();
 
+// Pantalla completa (botón arriba a la derecha o tecla F)
+function bindFullscreenUi() {
+  const btn = document.getElementById('btn-fullscreen');
+  const root = document.documentElement;
+  const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const toggle = () => {
+    try {
+      const r = isFull() ? (document.exitFullscreen || document.webkitExitFullscreen).call(document)
+                         : (root.requestFullscreen || root.webkitRequestFullscreen).call(root);
+      if (r && r.catch) r.catch(() => showToast('No se pudo cambiar a pantalla completa.', 'error'));
+    } catch (e) {
+      showToast('Este navegador no permite pantalla completa.', 'error');
+    }
+  };
+  const sync = () => {
+    const full = isFull();
+    document.getElementById('label-fullscreen').textContent = full ? 'Salir' : 'Pantalla completa';
+    document.getElementById('icon-fullscreen').innerHTML = full
+      ? '<path stroke-linecap="round" stroke-linejoin="round" d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>'
+      : '<path stroke-linecap="round" stroke-linejoin="round" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>';
+  };
+  if (!(root.requestFullscreen || root.webkitRequestFullscreen)) { btn.classList.add('hidden'); return; }   // p. ej. iPhone
+  btn.addEventListener('click', toggle);
+  document.addEventListener('fullscreenchange', sync);
+  document.addEventListener('webkitfullscreenchange', sync);
+  window.addEventListener('keydown', e => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
+    if (e.code === 'KeyF' && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); toggle(); }
+  });
+}
+
 // Con el panel de resultados a la izquierda, el centro de la imagen se corre a la parte visible del visor
 let viewShift = 0;
 function updatePanelViewOffset(dt) {
@@ -87,6 +118,7 @@ bindUiEvents();
 bindExtraUi();
 bindEventsUi();
 bindReplayUi();
+bindFullscreenUi();
 updateAutoFinishBtn();
 if (window.innerWidth < 768) state.top10Open = false;
 applyTop10Ui();
