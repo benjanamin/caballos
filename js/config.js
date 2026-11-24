@@ -11,6 +11,9 @@ const FINAL_SPRINT_MIN_S = 7;
 const FINAL_SPRINT_MAX_S = 11;
 // En los últimos segundos no hay turbos ni ataques al azar (evita estirones de último momento)
 const NO_RANDOM_BURSTS_S = 10;
+// Ánimo final del Top 5: en los últimos windowS segundos, si van a menos de closeS segundos del puntero,
+// empujan hasta un max extra (según su "corazón", lo cerca que estén y lo cerca de la meta)
+const FINAL_PUSH = { windowS: 9, closeS: 0.9, max: 0.04, blockS: 2.5 };   // calibrado: el puntero a 3 s de la meta gana ~57 %
 const NOSE_OFFSET = 2.05;         // Distancia del centro del caballo a la punta de la nariz (la meta se cruza con la nariz)
 const MAX_PARTICIPANTS = 2000;
 

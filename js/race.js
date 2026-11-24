@@ -101,6 +101,7 @@ function prepareRaceParticipants() {
       kickLead: FINAL_SPRINT_MIN_S + Math.random() * (FINAL_SPRINT_MAX_S - FINAL_SPRINT_MIN_S),
       kickPower: 1.05 + Math.random() * 0.05,
       kickUsed: false,
+      heart: 0.4 + Math.random() * 0.6,        // cuánto se anima en el final cuando va cerca del puntero
       kickT: 0,
       finished: false,
       finishTime: null,
@@ -396,7 +397,19 @@ function stepRaceSimulation(realDt) {
         p.turboCooldown = 999;
         if (p.rank > 1 && p.rank <= 6) announceTicker(`🚀 ¡${p.name} ATROPELLA desde el ${p.rank}° lugar!`);
       }
-      const kick = 1;
+      // Ánimo final: en el tramo final, los del Top 5 que van cerca del puntero empujan más
+      // (más cuanto más cerca de él y de la meta). Cada caballo tiene su propio "corazón".
+      let kick = 1;
+      // El que acaba de perder la punta no recibe ánimo por un rato (evita el "ping-pong" entre los dos de adelante)
+      if (p.rank >= 2 && p.rank <= 5 && leaderPre && !leaderPre.finished && tToFinish < FINAL_PUSH.windowS
+          && !(p.pushBlockedUntil > state.raceTime)) {
+        const gapS = (currentLeadX - p.x) / Math.max(6, p.speed || p.baseSpeed);
+        if (gapS >= 0 && gapS < FINAL_PUSH.closeS) {
+          const closeness = 1 - gapS / FINAL_PUSH.closeS;
+          const nearFinish = 1 - tToFinish / FINAL_PUSH.windowS;
+          kick = 1 + FINAL_PUSH.max * p.heart * closeness * (0.4 + 0.6 * nearFinish);
+        }
+      }
 
       const wave = Math.sin(state.raceTime * p.waveFreq + p.wavePhase) * p.waveAmp;
       const targetSpeed = Math.max(p.baseSpeed * 0.68, p.baseSpeed * stateMult * styleMult * packMult * kick + wave);
@@ -459,6 +472,8 @@ function stepRaceSimulation(realDt) {
 
   const leader = state.sortedParticipants[0];
   if (leader && leader.id !== state.currentLeaderId && state.phase === 'racing' && state.raceTime > 1.2 && state.winnerId === -1) {
+    const prevLeader = state.participants[state.currentLeaderId];
+    if (prevLeader) prevLeader.pushBlockedUntil = state.raceTime + FINAL_PUSH.blockS;   // ánimo final: el que pierde la punta se desanima un rato
     state.currentLeaderId = leader.id;
     announceTicker(`👑 ¡${leader.name} toma el primer lugar!`);
   }
