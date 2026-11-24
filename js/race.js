@@ -97,9 +97,11 @@ function prepareRaceParticipants() {
       wavePhase: Math.random() * Math.PI * 2,
       // Estilo: 'front' (puntero: sale fuerte, se apaga), 'closer' (atropellador: guarda y explota al final), 'stalker'
       style: (() => { const r = Math.random(); return r < 0.3 ? 'front' : r < 0.62 ? 'closer' : 'stalker'; })(),
-      kickAt: 0.66 + Math.random() * 0.2,      // dónde empieza su sprint final (fracción de la carrera)
-      kickPower: 1.03 + Math.random() * 0.07,
+      // Sprint final: empieza unos segundos antes de la meta, sube de a poco y se sostiene hasta la llegada
+      kickLead: FINAL_SPRINT_MIN_S + Math.random() * (FINAL_SPRINT_MAX_S - FINAL_SPRINT_MIN_S),
+      kickPower: 1.05 + Math.random() * 0.05,
       kickUsed: false,
+      kickT: 0,
       finished: false,
       finishTime: null,
       rank: idx + 1,
@@ -306,6 +308,10 @@ function stepRaceSimulation(realDt) {
     const p = state.participants[i];
     if (p.eliminated) { finishedCount++; continue; }   // fuera de carrera por un evento
     const progress = Math.max(0, Math.min(1, p.x / L));
+    // Segundos que le faltan para la meta (a su ritmo actual)
+    const tToFinish = (L - p.x - NOSE_OFFSET) / Math.max(6, p.speed || p.baseSpeed);
+    const finalStretch = tToFinish < NO_RANDOM_BURSTS_S;
+    const kicking = p.kickUsed && p.state === 'turbo';
 
     if (!p.finished) {
       p.turboCooldown = Math.max(0, p.turboCooldown - simDt);
@@ -315,7 +321,8 @@ function stepRaceSimulation(realDt) {
         if (p.stateTimer <= 0 && p.state !== 'tired') p.state = 'normal';
       }
 
-      if (p.state === 'turbo') p.stamina = Math.max(0, p.stamina - simDt * p.staminaDrain * 3.1);
+      if (kicking) p.stamina = Math.max(0, p.stamina - simDt * p.staminaDrain * 1.3);   // sprint sostenido: gasta menos que un turbo
+      else if (p.state === 'turbo') p.stamina = Math.max(0, p.stamina - simDt * p.staminaDrain * 3.1);
       else if (p.state === 'attack') p.stamina = Math.max(0, p.stamina - simDt * p.staminaDrain * 2.35);
       else if (p.state === 'recovery') p.stamina = Math.min(100, p.stamina + simDt * 15.5);
       else if (p.state === 'tired') {
@@ -323,7 +330,7 @@ function stepRaceSimulation(realDt) {
         if (p.stamina >= 36) p.state = 'normal';
       } else p.stamina = Math.max(0, p.stamina - simDt * p.staminaDrain * (p.rank === 1 ? 1.04 : 0.92));
 
-      if (p.stamina < 20 && p.state !== 'tired' && p.state !== 'recovery') {
+      if (p.stamina < 20 && p.state !== 'tired' && p.state !== 'recovery' && !kicking) {
         if (progress > 0.42 && !p.hasUsedSecondWind && Math.random() < 0.36) {
           p.hasUsedSecondWind = true;
           p.state = 'recovery';
@@ -336,7 +343,8 @@ function stepRaceSimulation(realDt) {
         }
       }
 
-      if (p.state === 'normal' && state.raceTime > 1.8) {
+      // En el tramo final ya no hay turbos ni ataques al azar: solo el sprint final de cada uno
+      if (p.state === 'normal' && state.raceTime > 1.8 && !finalStretch && !p.kickUsed) {
         const gapToLeader = currentLeadX - p.x;
         const turboChance = (progress > 0.62 ? 0.38 : 0.15) * simDt;
         if (p.turboCooldown <= 0 && p.stamina > 34 && Math.random() < turboChance) {
@@ -353,7 +361,13 @@ function stepRaceSimulation(realDt) {
       }
 
       let stateMult = 1.0;
-      if (p.state === 'turbo') stateMult = 1.21 * p.finishKick;
+      if (kicking) {
+        // Sube durante ~2 s y se mantiene; con poca energía rinde algo menos
+        p.kickT += simDt;
+        const ramp = Math.min(1, p.kickT / 2.0);
+        const boost = (p.kickPower - 1) + (p.kickLeading ? 0.012 : 0);
+        stateMult = 1 + boost * ramp * (0.8 + 0.2 * p.stamina / 100);
+      } else if (p.state === 'turbo') stateMult = 1.21 * p.finishKick;
       else if (p.state === 'attack') stateMult = 1.16;
       else if (p.state === 'recovery') stateMult = 1.11;
       else if (p.state === 'tired') stateMult = 0.84;
@@ -367,21 +381,22 @@ function stepRaceSimulation(realDt) {
       // Rebufo: quien va atrás descuenta (más cuanto más lejos, con tope); el líder pelea contra el viento
       const gapAhead = (leadQ - (p.x - p.startX) / p.totalDist) * L;
       let packMult = 1;
-      if (progress > 0.08 && progress < 0.97) {
+      if (progress > 0.08 && progress < 0.995) {   // hasta casi la meta: llegadas más apretadas
         if (gapAhead > 0.5) packMult += Math.min(0.055, gapAhead * 0.003);
         else if (p.rank === 1 && secondX !== null) packMult -= Math.min(0.015, Math.max(0, p.x - secondX) * 0.0015);
       }
 
       // Atropellada final: cada caballo tiene su momento de sprint
-      if (!p.kickUsed && progress >= p.kickAt && p.stamina > 18 && p.state !== 'tired') {
+      if (!p.kickUsed && tToFinish <= p.kickLead && state.raceTime > 3 && p.state !== 'tired') {
         p.kickUsed = true;
-        p.kickLeading = p.rank === 1; // el puntero defiende su lugar con más fuerza
+        p.kickT = 0;
+        p.kickLeading = p.rank === 1; // el puntero defiende su lugar un poco más
         p.state = 'turbo';
-        p.stateTimer = 2.4 + Math.random() * 1.8;
-        p.turboCooldown = 8;
+        p.stateTimer = 999;           // dura hasta la meta
+        p.turboCooldown = 999;
         if (p.rank > 1 && p.rank <= 6) announceTicker(`🚀 ¡${p.name} ATROPELLA desde el ${p.rank}° lugar!`);
       }
-      const kick = (p.kickUsed && p.state === 'turbo') ? p.kickPower + (p.kickLeading ? 0.09 : 0) : 1;
+      const kick = 1;
 
       const wave = Math.sin(state.raceTime * p.waveFreq + p.wavePhase) * p.waveAmp;
       const targetSpeed = Math.max(p.baseSpeed * 0.68, p.baseSpeed * stateMult * styleMult * packMult * kick + wave);

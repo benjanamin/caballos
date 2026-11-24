@@ -6,6 +6,11 @@
 // 1. CONSTANTES Y PALETAS
 // =========================================================================
 const MAX_DETAILED_HORSES = 20;   // Punteros con modelo completo (jinete, riendas, número, fuego)
+// Sprint final: cada caballo lo empieza entre estos segundos antes de la meta (sube de a poco y dura hasta la llegada)
+const FINAL_SPRINT_MIN_S = 7;
+const FINAL_SPRINT_MAX_S = 11;
+// En los últimos segundos no hay turbos ni ataques al azar (evita estirones de último momento)
+const NO_RANDOM_BURSTS_S = 10;
 const NOSE_OFFSET = 2.05;         // Distancia del centro del caballo a la punta de la nariz (la meta se cruza con la nariz)
 const MAX_PARTICIPANTS = 2000;
 
