@@ -23,10 +23,16 @@ const EVENT_TYPES = {
   sinkhole:  { icon: '🕳️', title: '¡SE ABRE UN SOCAVÓN EN LA PISTA!',    cause: 'Tragado por un socavón', dur: 4.0 },
   tsunami:   { icon: '🌊', title: '¡UNA OLA GIGANTE INUNDA LA PISTA!',   cause: 'Arrastrado por una ola gigante', dur: 5.0 },
   bees:      { icon: '🐝', title: '¡ENJAMBRE DE ABEJAS ASESINAS!',       cause: 'Huyó de un enjambre de abejas', dur: 4.6 },
-  bananas:   { icon: '🍌', title: '¡CÁSCARAS DE PLÁTANO EN LA PISTA!',   cause: 'Resbaló con una cáscara de plátano', dur: 3.8 }
+  bananas:   { icon: '🍌', title: '¡CÁSCARAS DE PLÁTANO EN LA PISTA!',   cause: 'Resbaló con una cáscara de plátano', dur: 3.8 },
+  train:     { icon: '🚂', title: '¡PASA UN TREN POR LA PISTA!',         cause: 'Atropellado por un tren', dur: 5.2 },
+  lava:      { icon: '🌋', title: '¡ERUPCIÓN! LLUEVE LAVA',              cause: 'Alcanzado por una bola de lava', dur: 4.8 },
+  magnet:    { icon: '🧲', title: '¡UN IMÁN GIGANTE ATRAE LAS HERRADURAS!', cause: 'Atrapado por un imán gigante', dur: 4.6 },
+  piano:     { icon: '🎹', title: '¡CAEN PIANOS DEL CIELO!',             cause: 'Aplastado por un piano', dur: 4.2 },
+  portal:    { icon: '🌀', title: '¡SE ABRE UN PORTAL DIMENSIONAL!',     cause: 'Se fue por un portal a otra dimensión', dur: 4.4 }
 };
 // Probabilidad de que un evento caiga sobre el grupo de punta (los primeros lugares)
 const LEADER_EVENT_CHANCE = 0.4;
+const TRAIN_RUNUP = 34;   // distancia desde donde viene el tren antes de entrar a la pista
 const EVENT_KEYS = Object.keys(EVENT_TYPES);
 
 let eventGroup = null;
@@ -65,13 +71,16 @@ function updateEliminatedBadge() {
 
 // Encuadre de cámara de cada evento (cámara principal y recuadro)
 function eventView(ev) {
-  const crossing = ev.type === 'tornado' || ev.type === 'boulder' || ev.type === 'tsunami';
-  const sky =ev.type === 'ufo' || ev.type === 'lightning' || ev.type === 'eagle' || ev.type === 'balloons' || (ev.type === 'meteor' && !ev.impact);
+  const crossing = ev.type === 'tornado' || ev.type === 'boulder' || ev.type === 'tsunami' || ev.type === 'train';
+  const sky = ev.type === 'ufo' || ev.type === 'lightning' || ev.type === 'eagle' || ev.type === 'balloons' || ev.type === 'magnet' || (ev.type === 'meteor' && !ev.impact);
   let lookY = sky ? 6 : 1.6;
   if (ev.type === 'balloons') lookY = 2.2 + Math.min(7, Math.max(0, ev.t - 0.8) * 1.8);
   else if (ev.type === 'eagle') lookY = 3 + Math.max(0, ev.t - 1.8) * 2.2;
-  else if (ev.type === 'freeze' || ev.type === 'tsunami') lookY = 2;
+  else if (ev.type === 'magnet') lookY = 4 + Math.max(0, ev.t - 3.2) * 3;
+  else if (ev.type === 'freeze' || ev.type === 'tsunami' || ev.type === 'train') lookY = 2;
   else if (ev.type === 'sinkhole' || ev.type === 'bananas') lookY = 1.1;
+  else if (ev.type === 'portal' || ev.type === 'lava') lookY = 2.8;
+  else if (ev.type === 'piano') lookY = 2.2;
   return { crossing, sky, lat: crossing ? 0 : ev.lat, lookY };
 }
 
@@ -116,7 +125,21 @@ function startEvent(type, free) {
   let cap = Math.min(free, Math.max(1, Math.floor(runners.length * 0.35)));
   let pool;
   const crossing = type === 'tornado' || type === 'boulder' || type === 'tsunami';
-  if (crossing) {
+  const halfW0 = m.halfWidth;
+  if (type === 'train') {
+    // El tren cruza la pista de lado a lado en un punto fijo justo delante del epicentro:
+    // le toca a quien llegue a ese cruce cuando pasa la locomotora
+    ev.lat0 = -halfW0 - TRAIN_RUNUP; ev.lat1 = halfW0 + TRAIN_RUNUP;
+    const travel = ev.dur * 0.9;
+    const hitAt = p => Math.max(0.2, ((p.z - ev.lat0) / (ev.lat1 - ev.lat0)) * travel);
+    const sTrain = E.x + Math.max(4, E.speed || E.baseSpeed) * hitAt(E);
+    const miss = p => Math.abs(p.x + Math.max(4, p.speed || p.baseSpeed) * hitAt(p) - sTrain);
+    pool = runners.filter(p => miss(p) < 2.2).sort((a, b) => miss(a) - miss(b));
+    cap = Math.min(cap, 40);
+    ev.trainS = sTrain;
+    ev.trainHitAt = hitAt;
+    ev.lat = 0;
+  } else if (crossing) {
     // Cruza la pista de lado a lado: se lleva a los que están en su franja
     const band = { boulder: 3.6, tornado: 4.5, tsunami: 5.5 }[type];
     pool = runners.filter(p => Math.abs(p.x - E.x) < band).sort((a, b) => Math.abs(a.x - E.x) - Math.abs(b.x - E.x));
@@ -124,8 +147,10 @@ function startEvent(type, free) {
     ev.lat = 0;
   } else {
     pool = [...runners].sort((a, b) => dist(a) - dist(b));
-    const radius = { ufo: 7, meteor: 9.5, lightning: 3.2, balloons: 6.5, freeze: 8.5, eagle: 4, sinkhole: 7.5, bees: 6, bananas: 6 }[type];
-    const maxN = { ufo: 40, meteor: 60, lightning: 5, balloons: 18, freeze: 35, eagle: 3, sinkhole: 35, bees: 12, bananas: 10 }[type];
+    const radius = { ufo: 7, meteor: 9.5, lightning: 3.2, balloons: 6.5, freeze: 8.5, eagle: 4, sinkhole: 7.5, bees: 6, bananas: 6,
+                     lava: 9, magnet: 7, piano: 5, portal: 7 }[type];
+    const maxN = { ufo: 40, meteor: 60, lightning: 5, balloons: 18, freeze: 35, eagle: 3, sinkhole: 35, bees: 12, bananas: 10,
+                   lava: 25, magnet: 12, piano: 4, portal: 20 }[type];
     pool = pool.filter((p, i) => i === 0 || dist(p) < radius);
     cap = Math.min(cap, maxN);
     if (type === 'ufo') cap = Math.min(cap, Math.max(1, Math.round(runners.length * 0.1)));
@@ -139,10 +164,12 @@ function startEvent(type, free) {
   ev.v = victims.reduce((a, p) => a + Math.max(4, p.speed || p.baseSpeed), 0) / victims.length;
   ev.s0 = E.x;
   const HIT = { ufo: 1.0, meteor: 1.1, lightning: 0.7, freeze: 0.9, balloons: 0.6, eagle: 1.5, tornado: ev.dur, boulder: ev.dur,
-                sinkhole: 0.8, tsunami: ev.dur, bees: 1.2, bananas: 0.5 };
+                sinkhole: 0.8, tsunami: ev.dur, bees: 1.2, bananas: 0.5, train: 0, lava: 0.9, magnet: 1.1, piano: 1.0, portal: 0.8 };
   ev.tStop = HIT[type];
-  ev.fixed = type === 'meteor' || type === 'lightning' || type === 'freeze' || type === 'balloons' || type === 'sinkhole' || type === 'bananas';
+  ev.fixed = type === 'meteor' || type === 'lightning' || type === 'freeze' || type === 'balloons' || type === 'sinkhole' || type === 'bananas'
+    || type === 'train' || type === 'lava' || type === 'piano' || type === 'portal';
   ev.s = ev.fixed ? ev.s0 + ev.v * ev.tStop : ev.s0;
+  if (type === 'train') ev.s = ev.trainS;
   ev.shatterT = ev.dur - 0.45;   // ola de frío: el hielo se rompe al final
   victims.forEach((p, i) => {
     let at;
@@ -155,6 +182,11 @@ function startEvent(type, free) {
     else if (type === 'sinkhole') at = 0.8 + i * 0.03;
     else if (type === 'bees') at = 1.0 + i * 0.15;
     else if (type === 'bananas') at = 0.5 + i * 0.1;
+    else if (type === 'train') at = ev.trainHitAt(p);
+    else if (type === 'lava') at = 0.9 + i * 0.12;
+    else if (type === 'magnet') at = 1.1 + i * 0.12;
+    else if (type === 'piano') at = 1.0 + i * 0.25;
+    else if (type === 'portal') at = 0.8 + i * 0.06;
     else at =Math.max(0.2, ((p.z - lat0) / (lat1 - lat0)) * ev.dur * 0.9);
     p.doomed = { ev, at, idx: i, spin: (Math.random() - 0.5) * 8, power: 0.7 + Math.random() * 0.6 };
     ev.victims.push(p);
@@ -590,7 +622,192 @@ function buildEventVisuals(ev, m) {
       addMesh(ev, 'peel' + i, g);
       ev.peels.push(g);
     });
+  } else if (ev.type === 'train') {
+    buildTrainVisuals(ev, m);
+  } else if (ev.type === 'lava') {
+    // Una bola de lava por víctima, que cae justo donde va a estar el caballo
+    ev.balls = [];
+    const geo = new THREE.IcosahedronGeometry(0.75, 1);
+    ev.victims.forEach((p, i) => {
+      const ball = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x7c2d12, emissive: 0xf97316, emissiveIntensity: 1.1, roughness: 0.8, flatShading: true }));
+      const glow = new THREE.Mesh(new THREE.SphereGeometry(1.4, 12, 10), additive(0xfb923c, 0.4));
+      ball.visible = glow.visible = false;
+      addMesh(ev, 'ball' + i, ball); addMesh(ev, 'glow' + i, glow);
+      const at = p.doomed.at;
+      trackPos(p.x + Math.max(4, p.speed || p.baseSpeed) * at, p.z, evTmp);
+      const to = new THREE.Vector3(evTmp.x, 0.7, evTmp.z);
+      const f = trackFrame(p.x);
+      const from = new THREE.Vector3(to.x - f.nx * (25 + Math.random() * 10) + (Math.random() - 0.5) * 12, 45, to.z - f.nz * (25 + Math.random() * 10) + (Math.random() - 0.5) * 12);
+      ev.balls.push({ ball, glow, from, to, at, hit: false });
+    });
+  } else if (ev.type === 'magnet') {
+    const mag = new THREE.Group();
+    const red = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.35, metalness: 0.3 });
+    const steel = new THREE.MeshStandardMaterial({ color: 0xe5e7eb, roughness: 0.2, metalness: 0.9 });
+    const arc = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.6, 14, 28, Math.PI), red);
+    arc.position.y = 1.6; mag.add(arc);
+    for (const sd of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.7, 1.2), red); leg.position.set(sd * 2.2, 0.75, 0); mag.add(leg);
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.6, 1.24), steel); tip.position.set(sd * 2.2, -0.35, 0); mag.add(tip);
+    }
+    mag.position.set(ev.wx, 40, ev.wz);
+    mag.rotation.y = trackFrame(ev.s).heading;
+    addMesh(ev, 'magnet', mag);
+    ev.fieldRings = [];
+    for (let k = 0; k < 4; k++) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 6, 40), additive(0x60a5fa, 0));
+      ring.rotation.x = Math.PI / 2;
+      addMesh(ev, 'field' + k, ring);
+      ev.fieldRings.push(ring);
+    }
+    ev.mag = new THREE.Vector3(ev.wx, 40, ev.wz);
+  } else if (ev.type === 'piano') {
+    // Un piano de cola por víctima: cae del cielo con su sombra creciendo en el suelo
+    ev.pianos = [];
+    const black = new THREE.MeshStandardMaterial({ color: 0x0b0b0f, roughness: 0.15, metalness: 0.2 });
+    const white = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4 });
+    ev.victims.forEach((p, i) => {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.75, 1.7), black); body.position.y = 1.25; g.add(body);
+      const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.75, 20, 1, false, 0, Math.PI), black);
+      tail.rotation.y = Math.PI / 2; tail.position.set(-1.1, 1.25, 0); g.add(tail);
+      const lid = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.06, 1.6), black); lid.position.set(-0.3, 1.95, 0.25); lid.rotation.x = -0.6; g.add(lid);
+      const keys = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.08, 1.6), white); keys.position.set(1.25, 1.45, 0); g.add(keys);
+      for (let k = 0; k < 7; k++) {
+        const bk = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.06, 0.09), black);
+        bk.position.set(1.2, 1.51, -0.7 + k * 0.23); g.add(bk);
+      }
+      for (const [lx, lz] of [[1.0, 0.7], [1.0, -0.7], [-1.4, 0]]) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.06, 0.9, 8), black); leg.position.set(lx, 0.45, lz); g.add(leg);
+      }
+      const at = p.doomed.at;
+      trackPos(p.x + Math.max(4, p.speed || p.baseSpeed) * at, p.z, evTmp);
+      g.position.set(evTmp.x, 40, evTmp.z);
+      g.rotation.y = Math.random() * Math.PI * 2;
+      g.visible = false;
+      addMesh(ev, 'piano' + i, g);
+      const shadow = new THREE.Mesh(new THREE.CircleGeometry(1.6, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false }));
+      shadow.rotation.x = -Math.PI / 2; shadow.position.set(evTmp.x, 0.07, evTmp.z);
+      addMesh(ev, 'pshadow' + i, shadow);
+      ev.pianos.push({ g, shadow, x: evTmp.x, z: evTmp.z, at, hit: false });
+    });
+  } else if (ev.type === 'portal') {
+    // Portal vertical de frente a los caballos, en el lugar al que van a llegar
+    const f = trackFrame(ev.s);
+    const portal = new THREE.Group();
+    portal.position.set(ev.wx, 3.3, ev.wz);
+    portal.rotation.y = Math.atan2(f.tx, f.tz);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.2, 0.32, 12, 56), new THREE.MeshBasicMaterial({ color: 0xc084fc }));
+    portal.add(ring);
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(3.55, 0.1, 8, 56), new THREE.MeshBasicMaterial({ color: 0x22d3ee }));
+    portal.add(ring2);
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(3.0, 48), additive(0x7c3aed, 0.75));
+    portal.add(disc);
+    const swirl = new THREE.Mesh(new THREE.RingGeometry(0.4, 2.9, 48, 1, 0, Math.PI * 1.4), additive(0x22d3ee, 0.45));
+    portal.add(swirl);
+    const swirl2 = new THREE.Mesh(new THREE.RingGeometry(0.8, 2.4, 48, 1, Math.PI, Math.PI * 1.2), additive(0xf0abfc, 0.4));
+    portal.add(swirl2);
+    portal.userData = { ring, ring2, disc, swirl, swirl2 };
+    portal.scale.setScalar(0.01);
+    addMesh(ev, 'portal', portal);
   }
+}
+
+// Tren: rieles que cruzan la pista, barreras con luces y una locomotora a vapor con tres vagones
+function buildTrainVisuals(ev, m) {
+  const f = trackFrame(ev.s);
+  const rotY = Math.atan2(-f.nz, f.nx);   // eje local x = dirección del tren (de lado a lado de la pista)
+  const railLen = (ev.lat1 - ev.lat0) + 40;
+  const rails = new THREE.Group();
+  trackPos(ev.s, (ev.lat0 + ev.lat1) / 2, evTmp);
+  rails.position.set(evTmp.x, 0, evTmp.z);
+  rails.rotation.y = rotY;
+  const steel = new THREE.MeshStandardMaterial({ color: 0x9ca3af, roughness: 0.3, metalness: 0.8 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5b3a1e, roughness: 1 });
+  for (const sd of [-1, 1]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(railLen, 0.1, 0.1), steel);
+    rail.position.set(0, 0.12, sd * 0.62); rails.add(rail);
+  }
+  const sleeperGeo = new THREE.BoxGeometry(0.28, 0.07, 1.9);
+  for (let x = -railLen / 2; x <= railLen / 2; x += 1.1) {
+    const sl = new THREE.Mesh(sleeperGeo, wood); sl.position.set(x, 0.05, 0); rails.add(sl);
+  }
+  rails.scale.set(1, 1, 0.01);
+  addMesh(ev, 'rails', rails);
+
+  // Barreras con luces rojas a los dos lados de la pista
+  ev.crossLights = [];
+  for (const sd of [-1, 1]) {
+    const post = new THREE.Group();
+    trackPos(ev.s - 2.2, sd * (m.halfWidth + 1.4), evTmp);
+    post.position.set(evTmp.x, 0, evTmp.z);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 3, 8), new THREE.MeshStandardMaterial({ color: 0xf8fafc }));
+    pole.position.y = 1.5; post.add(pole);
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.25, 1.4), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+    sign.position.y = 2.7; sign.rotation.y = rotY; post.add(sign);
+    for (const k of [-1, 1]) {
+      const light = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+      light.position.set(0, 2.2, 0); light.translateOnAxis(new THREE.Vector3(Math.cos(rotY + Math.PI / 2), 0, -Math.sin(rotY + Math.PI / 2)), k * 0.3);
+      post.add(light); ev.crossLights.push({ light, k });
+    }
+    addMesh(ev, 'xing' + sd, post);
+  }
+
+  // Tren
+  const train = new THREE.Group();
+  const paint = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.45, metalness: 0.2 });
+  const black = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.5, metalness: 0.4 });
+  const gold = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.3, metalness: 0.8 });
+  const windowMat = new THREE.MeshBasicMaterial({ color: 0xfef3c7 });
+  const wheels = [];
+  const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.16, 16);
+  const addWheel = (x, r = 0.42) => {
+    for (const sd of [-1, 1]) {
+      const w = new THREE.Group();
+      const tire = new THREE.Mesh(wheelGeo, black); tire.rotation.x = Math.PI / 2; tire.scale.set(r / 0.42, 1, r / 0.42); w.add(tire);
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(r * 1.7, 0.08, 0.18), paint); w.add(spoke);
+      w.position.set(x, r, sd * 0.78);
+      train.add(w); wheels.push(w);
+    }
+  };
+  const box = (sx, sy, sz, mat, x, y, z = 0) => { const b = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat); b.position.set(x, y, z); b.castShadow = true; train.add(b); return b; };
+  // Locomotora (la punta en x = 0)
+  box(4.4, 0.35, 1.5, black, -1.7, 0.65);
+  const boiler = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 2.6, 18), black);
+  boiler.rotation.z = Math.PI / 2; boiler.position.set(-0.75, 1.45, 0); boiler.castShadow = true; train.add(boiler);
+  for (const bx of [-1.6, -0.75, 0.1]) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.08, 18), gold);
+    band.rotation.z = Math.PI / 2; band.position.set(bx, 1.45, 0); train.add(band);
+  }
+  const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.18, 0.9, 12), black);
+  chimney.position.set(0.05, 2.5, 0); train.add(chimney);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 8), gold); dome.position.set(-1.0, 2.2, 0); train.add(dome);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), new THREE.MeshBasicMaterial({ color: 0xfef9c3 }));
+  lamp.position.set(0.6, 1.95, 0); train.add(lamp);
+  const catcher = box(0.6, 0.45, 1.5, new THREE.MeshStandardMaterial({ color: 0x6b7280, metalness: 0.6, roughness: 0.4 }), 0.5, 0.45);
+  catcher.rotation.z = -0.55;
+  box(1.5, 1.6, 1.6, paint, -2.95, 1.65);                       // cabina
+  box(1.8, 0.14, 1.8, black, -2.95, 2.5);                       // techo
+  for (const sd of [-1, 1]) box(0.6, 0.5, 0.03, windowMat, -2.85, 1.95, sd * 0.81);
+  addWheel(-0.45); addWheel(-1.45); addWheel(-2.45, 0.55);
+  // Vagones
+  const colors = [0x15803d, 0x1d4ed8, 0xca8a04];
+  for (let k = 0; k < 3; k++) {
+    const x0 = -4.25 - k * 3.55;
+    const mat = new THREE.MeshStandardMaterial({ color: colors[k], roughness: 0.5 });
+    box(0.4, 0.15, 0.2, black, x0 + 0.1, 0.75);                  // enganche
+    box(3.2, 0.3, 1.45, black, x0 - 1.7, 0.65);
+    box(3.1, 1.45, 1.45, mat, x0 - 1.7, 1.5);
+    box(3.3, 0.14, 1.65, black, x0 - 1.7, 2.3);
+    for (const sd of [-1, 1]) for (let w = 0; w < 3; w++) box(0.55, 0.45, 0.03, windowMat, x0 - 0.75 - w * 0.95, 1.7, sd * 0.74);
+    addWheel(x0 - 0.65); addWheel(x0 - 2.75);
+  }
+  ev.trainLen = 4.25 + 3 * 3.55;
+  train.rotation.y = rotY;
+  train.userData = { wheels };
+  trackPos(ev.s, ev.lat0, evTmp);
+  train.position.set(evTmp.x, 0, evTmp.z);
+  addMesh(ev, 'train', train);
 }
 
 // ---------------- Animación de eventos (tiempo de simulación) ----------------
@@ -808,8 +1025,20 @@ function updateEvents(simDt) {
     sh.material.opacity = Math.max(0, 0.3 - ev.ep.y * 0.012) * Math.min(1, t * 3);
   } else if (ev.type === 'sinkhole') {
     // Se abre (con temblor y polvo), se traga a los caballos y se vuelve a cerrar
-    const open = t < 0.8 ? 1 - Math.pow(1 - t / 0.8, 3) : t > ev.dur - 0.7 ? Math.max(0.01, (ev.dur - t) / 0.7) : 1;
+    const closeT = Math.min(ev.dur, ev.closeAt ?? Infinity);
+    const open = t < 0.8 ? 1 - Math.pow(1 - t / 0.8, 3) : t > closeT - 0.7 ? Math.max(0.01, (closeT - t) / 0.7) : 1;
     for (const k of ['hole', 'inner', 'rim']) M[k].scale.setScalar(Math.max(0.01, open));
+    // Mientras está abierto, también caen los que llegan después y pisan el hoyo.
+    // Si ya no se puede eliminar a nadie más (mínimo de sobrevivientes), el hoyo se cierra enseguida.
+    if (t > 0.5 && t < closeT - 0.7 && ev.closeAt === undefined) {
+      const r = 7.5 * open * 0.85;
+      const more = sweepIntoEvent(ev, p => {
+        if (Math.abs(p.x - ev.s) > r + 2) return false;
+        trackPos(p.x + 0.6, p.z, evTmp);
+        return Math.hypot(evTmp.x - ev.wx, evTmp.z - ev.wz) < r;
+      });
+      if (!more) ev.closeAt = t + 0.75;
+    }
     if (!ev.impact && t >= 0.15) { ev.impact = true; audioEngine.playBoom(); }
     if (t < 1.6) {
       const n = Math.min(10, Math.floor(simDt * 120 + Math.random()));
@@ -884,6 +1113,114 @@ function updateEvents(simDt) {
       else g.rotation.x = 0;
       if (t > ev.dur - 0.4) g.scale.setScalar(Math.max(0.01, 1.7 * (ev.dur - t) / 0.4));
     });
+  } else if (ev.type === 'train') {
+    updateTrain(ev, t, simDt);
+  } else if (ev.type === 'lava') {
+    // Cielo rojizo con brasas y bolas de lava que caen una tras otra
+    if (Math.random() < simDt * 30) {
+      firePool.spawn(ev.wx + (Math.random() - 0.5) * 24, 12 + Math.random() * 8, ev.wz + (Math.random() - 0.5) * 24, (Math.random() - 0.5) * 2, -4, (Math.random() - 0.5) * 2,
+        1.4, 0.3, 0.1, 1, 0.6, 0.1, 0.8, 0.15, 0.02, 0.9, -2, 0.3);
+    }
+    let booms = 0;
+    for (const b of ev.balls) {
+      const k = (t - (b.at - 0.9)) / 0.9;
+      if (k <= 0 || b.hit) continue;
+      if (k < 1) {
+        b.ball.visible = b.glow.visible = true;
+        const pos = evTmp.copy(b.from).lerp(b.to, k * k);
+        b.ball.position.copy(pos); b.glow.position.copy(pos);
+        b.ball.rotation.x += simDt * 7; b.ball.rotation.y += simDt * 5;
+        for (let q = 0; q < 3; q++) {
+          firePool.spawn(pos.x, pos.y, pos.z, (Math.random() - 0.5) * 2, 1 + Math.random() * 2, (Math.random() - 0.5) * 2,
+            0.5, 1.2, 0.2, 1, 0.75, 0.2, 0.8, 0.1, 0.02, 0.9, 0, 0.5);
+        }
+      } else {
+        b.hit = true;
+        b.ball.visible = b.glow.visible = false;
+        if (booms++ < 1) audioEngine.playBoom();
+        for (let q = 0; q < 40; q++) {
+          const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 7;
+          firePool.spawn(b.to.x, 0.5, b.to.z, Math.cos(a) * sp, 3 + Math.random() * 7, Math.sin(a) * sp, 0.6 + Math.random() * 0.4, 0.6, 0.15, 1, 0.8, 0.3, 0.8, 0.12, 0.02, 1, -12, 0.6);
+        }
+        const scorch = new THREE.Mesh(new THREE.CircleGeometry(1.6, 20), new THREE.MeshStandardMaterial({ color: 0x1c1410, roughness: 1, transparent: true, opacity: 0.8 }));
+        scorch.rotation.x = -Math.PI / 2; scorch.position.set(b.to.x, 0.045, b.to.z);
+        eventGroup.add(scorch);   // las quemaduras quedan hasta el final de la carrera
+      }
+    }
+  } else if (ev.type === 'magnet') {
+    // Baja del cielo, atrae a los caballos por las herraduras y se va volando con ellos
+    const HOVER = 9.5;
+    let y;
+    if (t < 1.0) y = 40 - (40 - HOVER) * (1 - Math.pow(1 - t, 3));
+    else if (t < 3.3) y = HOVER + Math.sin(t * 3) * 0.25;
+    else { const k = t - 3.3; y = HOVER + k * k * 22; }
+    const drift = t > 3.3 ? (t - 3.3) * (t - 3.3) * 12 : 0;
+    trackPos(ev.s + drift, ev.lat, evTmp);
+    ev.mag.set(evTmp.x, y, evTmp.z);
+    M.magnet.position.copy(ev.mag);
+    M.magnet.rotation.z = Math.sin(t * 2.3) * 0.06;
+    const fade = t > ev.dur - 0.5 ? Math.max(0.01, (ev.dur - t) / 0.5) : 1;
+    M.magnet.scale.setScalar(fade);
+    ev.mFade = fade;
+    const on = t > 0.9 && t < 3.4 ? 1 : 0;
+    ev.fieldRings.forEach((ring, i) => {
+      const ph = (t * 1.3 + i / ev.fieldRings.length) % 1;
+      ring.position.set(ev.mag.x, y - 1 - ph * (y - 1), ev.mag.z);
+      ring.scale.setScalar(1.5 + ph * 5);
+      ring.material.opacity = on * 0.6 * Math.sin(ph * Math.PI);
+    });
+    if (on && Math.random() < simDt * 40) {
+      firePool.spawn(ev.mag.x + (Math.random() - 0.5) * 5, y - 0.8, ev.mag.z + (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 3, -2 - Math.random() * 3, (Math.random() - 0.5) * 3,
+        0.35, 0.25, 0.05, 0.75, 0.9, 1, 0.3, 0.6, 1, 1, 0, 0.5);
+    }
+  } else if (ev.type === 'piano') {
+    let crashes = 0;
+    for (const pn of ev.pianos) {
+      const k = (t - (pn.at - 1.0)) / 1.0;   // un segundo de caída
+      if (k <= 0) continue;
+      if (!pn.hit) {
+        pn.g.visible = true;
+        const kk = Math.min(1, k);
+        pn.g.position.y = 40 * (1 - kk * kk);
+        pn.g.rotation.x = (1 - kk) * 0.8; pn.g.rotation.z = (1 - kk) * 0.5;
+        pn.shadow.material.opacity = 0.15 + 0.45 * kk;
+        pn.shadow.scale.setScalar(0.4 + 0.6 * kk);
+        if (k >= 1) {
+          pn.hit = true;
+          pn.g.position.y = 0; pn.g.rotation.x = 0; pn.g.rotation.z = 0.08;
+          pn.shadow.material.opacity = 0;
+          if (crashes++ < 1) audioEngine.playPianoCrash();
+          for (let q = 0; q < 50; q++) {
+            const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 6;
+            smokePool.spawn(pn.x, 0.3, pn.z, Math.cos(a) * sp, 1 + Math.random() * 2, Math.sin(a) * sp, 1.2, 0.8, 2.4, 0.6, 0.5, 0.4, 0.75, 0.68, 0.6, 0.6, 0, 1.2);
+          }
+          for (let q = 0; q < 12; q++) {   // estrellitas de dibujo animado
+            const a = Math.random() * Math.PI * 2;
+            firePool.spawn(pn.x, 2.4, pn.z, Math.cos(a) * 2, 2 + Math.random() * 2, Math.sin(a) * 2, 0.9, 0.35, 0.2, 1, 0.95, 0.4, 1, 0.85, 0.2, 1, -3, 0.5);
+          }
+        }
+      } else if (t > ev.dur - 0.5) {
+        pn.g.scale.setScalar(Math.max(0.01, (ev.dur - t) / 0.5));
+      }
+    }
+  } else if (ev.type === 'portal') {
+    const P = M.portal, U = P.userData;
+    const sc = t < 0.6 ? 1 - Math.pow(1 - t / 0.6, 3) : t > ev.dur - 0.6 ? Math.max(0.01, (ev.dur - t) / 0.6) : 1;
+    P.scale.setScalar(Math.max(0.01, sc));
+    U.swirl.rotation.z -= simDt * 4;
+    U.swirl2.rotation.z += simDt * 2.6;
+    U.ring2.rotation.z += simDt * 1.5;
+    U.disc.material.opacity = 0.6 + Math.sin(t * 9) * 0.15;
+    if (!ev.impact && t > 0.2) { ev.impact = true; audioEngine.playPortal(); }
+    // Chispas que giran hacia el centro
+    if (sc > 0.5) {
+      for (let q = 0; q < 3; q++) {
+        const a = Math.random() * Math.PI * 2, r = 3.5 + Math.random() * 2;
+        const f = trackFrame(ev.s);
+        const ox = f.nx * Math.cos(a) * r, oz = f.nz * Math.cos(a) * r, oy = Math.sin(a) * r;
+        firePool.spawn(ev.wx + ox, 3.3 + oy, ev.wz + oz, -ox * 1.4, -oy * 1.4, -oz * 1.4, 0.7, 0.25, 0.05, 0.8, 0.5, 1, 0.2, 0.9, 1, 1, 0, 0);
+      }
+    }
   }
 
   if (t >= ev.dur) {
@@ -935,6 +1272,56 @@ function flashScreen() {
   flash.classList.remove('flash'); void flash.offsetWidth; flash.classList.add('flash');
 }
 
+// Suma víctimas a un evento en curso (los que llegan después y lo tocan).
+// Respeta el mínimo de sobrevivientes; devuelve false si ya no se puede eliminar a nadie más.
+function sweepIntoEvent(ev, test) {
+  let free = activeRunners() - MIN_SURVIVORS;
+  if (free <= 0) return false;
+  for (const p of state.participants) {
+    if (p.eliminated || p.doomed || p.finished) continue;
+    if (!test(p)) continue;
+    p.doomed = { ev, at: ev.t, idx: ev.victims.length, spin: (Math.random() - 0.5) * 8, power: 0.7 + Math.random() * 0.6 };
+    ev.victims.push(p);
+    if (--free <= 0) return false;
+  }
+  return true;
+}
+
+// Tren: avanza de lado a lado; se lleva a todo el que esté en su camino (locomotora y vagones)
+function updateTrain(ev, t, simDt) {
+  const M = ev.meshes;
+  const travel = ev.dur * 0.9;
+  const lat = ev.lat0 + (ev.lat1 - ev.lat0) * Math.min(1, t / travel);
+  const prevLat = ev.trainLat ?? lat;
+  ev.trainLat = lat;
+  const f = trackPos(ev.s, lat, evTmp);
+  const fx = evTmp.x, fz = evTmp.z, nx = f.nx, nz = f.nz, tx = f.tx, tz = f.tz;
+  M.train.position.set(fx, 0, fz);
+  for (const w of M.train.userData.wheels) w.rotation.z -= (lat - prevLat) / 0.42;
+  // Los rieles aparecen al empezar y se van al final
+  const railsIn = Math.min(1, t / 0.5), railsOut = t > ev.dur - 0.5 ? Math.max(0.01, (ev.dur - t) / 0.5) : 1;
+  M.rails.scale.z = Math.max(0.01, Math.min(railsIn, railsOut));
+  // Luces de la barrera alternadas
+  const blink = Math.floor(t * 4) % 2;
+  for (const c of ev.crossLights) c.light.visible = (c.k > 0) === (blink === 0);
+  // Humo de la chimenea
+  if (Math.random() < simDt * 30) {
+    smokePool.spawn(fx + nx * 0.05, 3.0, fz + nz * 0.05, -nx * 3 + (Math.random() - 0.5), 2.5 + Math.random() * 1.5, -nz * 3 + (Math.random() - 0.5),
+      1.6, 0.6, 2.6, 0.35, 0.35, 0.38, 0.7, 0.7, 0.72, 0.6, -0.5, 0.8);
+  }
+  if (!ev.horn2 && t > 1.3) { ev.horn2 = true; audioEngine.playTrainHorn(); }
+  // Atropella también a los que llegan al cruce mientras pasan los vagones
+  if (t < travel) {
+    sweepIntoEvent(ev, p => {
+      if (Math.abs(p.x - ev.s) > 3) return false;
+      trackPos(p.x + 0.8, p.z, tmpV3);
+      const rx = tmpV3.x - fx, rz = tmpV3.z - fz;
+      const along = rx * nx + rz * nz, side = rx * tx + rz * tz;
+      return along < 0.8 && along > -ev.trainLen && Math.abs(side) < 1.4;
+    });
+  }
+}
+
 // El evento alcanza a un caballo: desde aquí deja de correr
 function captureVictim(p, ev) {
   const d = p.doomed;
@@ -942,7 +1329,7 @@ function captureVictim(p, ev) {
   const f = trackPos(p.x, p.z, base);
   let dx = base.x - ev.wx, dz = base.z - ev.wz;
   const len = Math.hypot(dx, dz) || 1;
-  if (ev.type === 'boulder') { dx = f.nx * 0.85 + f.tx * 0.5; dz = f.nz * 0.85 + f.tz * 0.5; }   // sale despedido hacia donde rueda la roca
+  if (ev.type === 'boulder' || ev.type === 'train') { dx = f.nx * 0.85 + f.tx * 0.5; dz = f.nz * 0.85 + f.tz * 0.5; }   // sale despedido hacia donde rueda la roca
   else if (len < 0.3) { dx = f.nx; dz = f.nz; } else { dx /= len; dz /= len; }
   p.doomed = null;
   p.eliminated = true;
@@ -980,11 +1367,11 @@ function elimTransform(p) {
     if (r >= 1) { o.visible = false; return o; }
     o.x = b.x + (ev.wx - b.x) * r * 0.9; o.z = b.z + (ev.wz - b.z) * r * 0.9;
     o.y = r * r * 8.5; o.s = 1 - 0.8 * r; o.ry = b.heading + r * e.spin * 2;
-  } else if (ev.type === 'meteor' || ev.type === 'boulder') {
+  } else if (ev.type === 'meteor' || ev.type === 'boulder' || ev.type === 'train') {
     if (ev.type === 'meteor' && !ev.impact) return o;
     const tau = ev.type === 'meteor' ? t - ev.impactT : k;
     if (tau > 1.7) { o.visible = false; return o; }
-    const sp = (ev.type === 'meteor' ? 9 : 7.5) * e.power;
+    const sp = (ev.type === 'meteor' ? 9 : ev.type === 'train' ? 11 : 7.5) * e.power;
     o.x = b.x + e.vx * sp * tau; o.z = b.z + e.vz * sp * tau;
     o.y = Math.max(0, (ev.type === 'meteor' ? 12 : 10) * e.power * tau - 9 * tau * tau);
     o.ry = b.heading + e.spin * tau; o.rz = e.spin * tau * 0.6;
@@ -1068,6 +1455,47 @@ function elimTransform(p) {
     o.ry = b.heading + e.spin * tau * 1.4;
     o.rz = Math.min(1.45, k * 2.6) * (e.spin > 0 ? 1 : -1);
     o.s = k > 1.5 ? Math.max(0.01, 1 - (k - 1.5) / 0.4) : 1;
+  } else if (ev.type === 'lava') {
+    // Salta por el impacto, cae de lado humeando y desaparece
+    if (k < 0) return o;
+    if (k > 1.6) { o.visible = false; return o; }
+    o.x = b.x + e.vx * 2.5 * k; o.z = b.z + e.vz * 2.5 * k;
+    o.y = Math.max(0, 6 * e.power * k - 9 * k * k);
+    o.rz = Math.min(1.5, k * 3) * (e.spin > 0 ? 1 : -1);
+    o.ry = b.heading + e.spin * k * 0.5;
+    o.s = k > 1.2 ? Math.max(0.01, 1 - (k - 1.2) / 0.4) : 1;
+    if (Math.random() < 0.25) smokePool.spawn(o.x, 1.2 + o.y, o.z, 0, 2, 0, 0.9, 0.5, 1.6, 0.2, 0.18, 0.16, 0.45, 0.42, 0.4, 0.6, 0, 1);
+  } else if (ev.type === 'magnet') {
+    // Sale volando patas arriba hasta pegarse por las herraduras a las puntas del imán
+    if (k < 0) return o;
+    const r = Math.min(1, k / 0.7), eased = r * r * (3 - 2 * r);
+    const m = ev.mag;
+    const sd = e.idx % 2 ? 1 : -1;                    // punta izquierda o derecha
+    const row = Math.floor(e.idx / 2);
+    const hx = Math.cos(trackFrame(ev.s).heading);   // las puntas están a lo largo de la pista
+    const hz = -Math.sin(trackFrame(ev.s).heading);
+    const tx = m.x + hx * sd * 2.2 + (row % 3 - 1) * 0.5, tz = m.z + hz * sd * 2.2 + (row % 2 ? 0.4 : -0.4);
+    const ty = Math.max(0, m.y - 0.75 - row * 0.15);
+    o.x = b.x + (tx - b.x) * eased; o.z = b.z + (tz - b.z) * eased; o.y = ty * eased;
+    o.rz = Math.PI * eased;                           // queda colgando patas arriba
+    o.ry = b.heading + Math.sin(k * 3 + e.spin) * 0.3 * r;
+    o.s = (1 - 0.2 * r) * (ev.mFade ?? 1);
+  } else if (ev.type === 'piano') {
+    // Aplastado: se achata de golpe bajo el piano
+    if (k < 0) return o;
+    if (k > 0.25) { o.visible = false; return o; }
+    o.s = Math.max(0.05, 1 - k * 4);
+  } else if (ev.type === 'portal') {
+    // Absorbido hacia el centro del portal, girando y encogiéndose
+    if (k < 0) return o;
+    const r = Math.min(1, k / 1.1);
+    if (r >= 1) { o.visible = false; return o; }
+    const e2 = r * r;
+    o.x = b.x + (ev.wx - b.x) * e2; o.z = b.z + (ev.wz - b.z) * e2;
+    o.y = e2 * 2.2;
+    o.s = 1 - 0.92 * e2;
+    o.ry = b.heading + e2 * e.spin * 3;
+    o.rz = e2 * 1.3 * (e.spin > 0 ? 1 : -1);
   }
   return o;
 }
@@ -1218,6 +1646,10 @@ function playEventSound(type) {
   else if (type === 'eagle') audioEngine.playWind();
   else if (type === 'sinkhole') audioEngine.playRumble();
   else if (type === 'bananas') audioEngine.playSlip();
+  else if (type === 'train') audioEngine.playTrainHorn();
+  else if (type === 'lava') { audioEngine.playRumble(); audioEngine.playWhistle(); }
+  else if (type === 'magnet') audioEngine.playMagnet();
+  else if (type === 'piano') audioEngine.playWhistle();
   // ola gigante y abejas: su sonido empieza cuando aparecen (ver updateEvents)
 }
 

@@ -172,6 +172,84 @@ function buildCritterSkin(o) {
 }
 
 // Esqueleto de caballo con ojos brillantes
+// Vaca Holstein: cuerpo rectangular, cuello, cabeza con hocico rosado, cuernos, orejas,
+// manchas negras planas, ubre, cencerro y cola con mechón
+function buildCowSkin() {
+  const { sphere: S, cyl: C, box: B, cone: K } = SG();
+  const G = new THREE.Group(), core = new THREE.Group();
+  const LEG = 0.85, HH = 0.475;            // largo de pata y media altura del cuerpo
+  const bodyY = LEG + HH;
+  core.position.y = bodyY;
+  G.add(core);
+  const white = skinMat(0xf8f8f4, { r: 0.8 });
+  const black = skinMat(0x16161a, { r: 0.8 });
+  const pink = skinMat(0xf2aeb0, { r: 0.6 });
+  const horn = skinMat(0xeadfc4, { r: 0.5 });
+  const dark = skinMat(0x050505, { r: 0.3 });
+  const gold = skinMat(0xfbbf24, { r: 0.3, m: 0.8 });
+  // Cuerpo
+  part(core, B, white, [2.2, HH * 2, 0.9], null, null, true);
+  part(core, S, white, [0.5, HH, 0.45], [1.05, 0, 0], null, true);
+  part(core, S, white, [0.48, HH, 0.45], [-1.05, 0.02, 0], null, true);
+  part(core, S, white, [1.1, 0.3, 0.44], [0, -0.38, 0]);
+  // Manchas negras planas a los costados y en el lomo
+  const spots = [[0.45, 0.1, 0.75, 0.55, 0.2], [-0.55, 0.05, 0.65, 0.62, -0.15], [-1.1, -0.05, 0.35, 0.45, 0.3], [1.0, 0.15, 0.3, 0.35, 0]];
+  for (const sd of [-1, 1]) {
+    spots.forEach(([x, y, w, h, rz], i) => {
+      if (sd < 0 && i === 3) return;
+      part(core, B, black, [w, h, 0.03], [x * (sd < 0 ? 0.9 : 1), y, sd * 0.455], [0, 0, rz * sd]);
+    });
+  }
+  part(core, B, black, [0.75, 0.03, 0.6], [-0.25, HH + 0.005, 0.05]);
+  // Cuello y cabeza
+  part(core, B, white, [0.6, 0.55, 0.5], [1.3, 0.3, 0], [0, 0, 0.5], true);
+  const head = new THREE.Group();
+  head.position.set(1.62, 0.5, 0);
+  core.add(head);
+  part(head, B, white, [0.48, 0.42, 0.42], null, null, true);
+  part(head, B, white, [0.42, 0.34, 0.36], [0.3, -0.13, 0], [0, 0, -0.35]);
+  part(head, B, pink, [0.2, 0.26, 0.4], [0.52, -0.28, 0], [0, 0, -0.35]);
+  part(head, B, black, [0.26, 0.26, 0.02], [0.08, 0.04, 0.215]);           // parche en un ojo
+  for (const sd of [-1, 1]) {
+    part(head, S, dark, [0.04, 0.035, 0.03], [0.62, -0.25, sd * 0.09]);    // narices
+    part(head, S, dark, [0.055, 0.06, 0.04], [0.12, 0.08, sd * 0.222]);    // ojos
+    part(head, S, white, [0.018, 0.018, 0.012], [0.14, 0.1, sd * 0.255]);
+    part(head, B, white, [0.1, 0.1, 0.3], [-0.06, 0.1, sd * 0.33], [sd * 0.3, 0, 0]);   // orejas
+    part(head, B, pink, [0.06, 0.06, 0.2], [-0.04, 0.1, sd * 0.36], [sd * 0.3, 0, 0]);
+    part(head, K, horn, [0.055, 0.28, 0.055], [-0.1, 0.3, sd * 0.17], [sd * 0.65, 0, 0.15]);   // cuernos
+  }
+  part(head, B, black, [0.16, 0.08, 0.2], [-0.05, 0.23, 0]);                // mechón
+  // Cencerro
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.035, 6, 20), skinMat(0x7c2d12));
+  collar.position.set(1.32, 0.12, 0); collar.rotation.y = Math.PI / 2; collar.rotation.x = 0.5; core.add(collar);
+  part(core, K, gold, [0.1, 0.16, 0.1], [1.48, -0.22, 0], null, true);
+  // Ubre
+  part(core, S, pink, [0.27, 0.17, 0.26], [-0.55, -0.48, 0]);
+  for (const [tx, tz] of [[-0.48, 0.08], [-0.48, -0.08], [-0.62, 0.08], [-0.62, -0.08]]) part(core, C, pink, [0.025, 0.1, 0.025], [tx, -0.64, tz]);
+  // Cola con mechón negro
+  const tail = new THREE.Group();
+  tail.position.set(-1.5, 0.38, 0); tail.rotation.z = -0.25;
+  core.add(tail);
+  part(tail, C, white, [0.035, 1.05, 0.035], [0, -0.52, 0]);
+  part(tail, S, black, [0.09, 0.17, 0.09], [0, -1.08, 0]);
+  // Patas con pezuñas negras (algunas con mancha)
+  const legs = [];
+  const L = LEG + HH - 0.3;
+  for (const [lx, front] of [[0.85, true], [-0.85, false]]) {
+    for (const sd of [-1, 1]) {
+      const piv = new THREE.Group();
+      piv.position.set(lx, -0.3, sd * 0.3);
+      core.add(piv);
+      part(piv, B, white, [0.2, L - 0.12, 0.2], [0, -(L - 0.12) / 2, 0], null, true);
+      if ((front && sd > 0) || (!front && sd < 0)) part(piv, B, black, [0.21, 0.28, 0.21], [0, -0.3, 0]);
+      part(piv, B, black, [0.23, 0.14, 0.23], [0.02, -L + 0.07, 0]);
+      legs.push({ piv, front, sd });
+    }
+  }
+  G.userData = { kind: 'critter', core, head, legs, tail, gait: 'trot', bodyY, seatY: bodyY + HH - 0.42, tailKind: 'cow' };
+  return G;
+}
+
 function buildSkeletonSkin() {
   const { sphere: S, cyl: C, box: B } = SG();
   const G = new THREE.Group(), core = new THREE.Group();
@@ -323,9 +401,7 @@ function buildSkinModel(key) {
     case 'cuy': return buildCritterSkin({ color: 0xf5efe4, muzzle: 0xf5efe4, nose: 0xf4a3a8, earColor: 0xe8a59a, len: 1.1, h: 0.62, w: 0.6, leg: 0.22, legR: 0.12,
       head: [0.55, 0.48, 0.46], headUp: -0.05, gait: 'bound', whiskers: true, paw: 0xf4c7c0,
       spots: [{ color: 0xd9822b, n: 3, size: 0.45, head: true }, { color: 0x1f1a17, n: 2, size: 0.4 }] });
-    case 'cow': return buildCritterSkin({ color: 0xf8f8f5, muzzle: 0xf0b8b0, nose: 0x7a4a45, len: 1.3, h: 0.6, w: 0.55, leg: 0.8, legR: 0.12,
-      head: [0.5, 0.4, 0.34], ears: 'cow', tail: 'cow', udder: true, gait: 'trot', paw: 0x222222,
-      spots: [{ color: 0x111111, n: 6, size: 0.32 }] });
+    case 'cow': return buildCowSkin();
     case 'pig': return buildCritterSkin({ color: 0xf4a6b5, muzzle: 0xf4a6b5, nose: 0xf08ca0, len: 1.15, h: 0.6, w: 0.58, leg: 0.48, legR: 0.13,
       head: [0.5, 0.45, 0.45], ears: 'pig', tail: 'pig', snoutDisk: true, gait: 'trot', paw: 0x6b4a40 });
     case 'skeleton': return buildSkeletonSkin();

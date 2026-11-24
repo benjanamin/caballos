@@ -212,6 +212,10 @@ class RaceAudioEngine {
   playFreeze() { if (!this.enabled || !this.ctx) return; try { this._noise('highpass', 3200, 1.6, 0.18); this._tone('sine', 3400, 1700, 1.1, 0.05); this._tone('sine', 2200, 4200, 0.9, 0.04, 0.35); } catch (e) {} }
   playBuzz() { if (!this.enabled || !this.ctx) return; try { this._tone('sawtooth', 215, 245, 3.2, 0.05, 0, 23); this._tone('sawtooth', 290, 260, 3.0, 0.035, 0.15, 31); } catch (e) {} }
   playSlip() { if (!this.enabled || !this.ctx) return; try { this._tone('sine', 300, 1500, 0.35, 0.1); this._tone('sine', 1400, 220, 0.5, 0.08, 0.35); this._noise('lowpass', 300, 0.4, 0.3, 0.8); } catch (e) {} }
+  playTrainHorn() { if (!this.enabled || !this.ctx) return; try { [311, 370, 466].forEach(f => this._tone('sawtooth', f, f * 0.985, 1.3, 0.045)); this._noise('lowpass', 150, 3.5, 0.3, 0.2); } catch (e) {} }
+  playPianoCrash() { if (!this.enabled || !this.ctx) return; try { [131, 156, 185, 208, 247, 277, 330].forEach((f, i) => this._tone('triangle', f, f * 0.97, 1.4, 0.06, i * 0.012)); this._noise('lowpass', 420, 0.7, 0.45); } catch (e) {} }
+  playMagnet() { if (!this.enabled || !this.ctx) return; try { this._tone('sine', 110, 170, 2.6, 0.09, 0, 6); this._tone('square', 55, 85, 2.2, 0.025, 0.4, 3); } catch (e) {} }
+  playPortal() { if (!this.enabled || !this.ctx) return; try { this._tone('sine', 180, 950, 1.4, 0.08, 0, 8); this._tone('triangle', 900, 140, 2.2, 0.06, 1.4, 5); } catch (e) {} }
   playShatter() { if (!this.enabled || !this.ctx) return; try { this._noise('highpass', 4200, 0.6, 0.4); this._tone('triangle', 3800, 1900, 0.35, 0.06); this._tone('triangle', 2900, 1500, 0.3, 0.05, 0.08); } catch (e) {} }
 
   playCheer() {
