@@ -194,8 +194,11 @@ let arrivalsShown = 0;
 let lastArrivalsUpdate = 0;
 function updateArrivalsFeed() {
   const feed = document.getElementById('arrivals-feed');
+  const listEl = document.getElementById('arrivals-list');
+  const inReplay = state.phase === 'replay';
   const resultsOpen = !document.getElementById('results-modal').classList.contains('hidden');
-  if (state.winnerId === -1 || state.phase === 'ready' || state.phase === 'countdown' || state.phase === 'replay' || resultsOpen) {
+  // En la repetición la lista se ve aunque esté el panel de resultados (para leerla con calma)
+  if (state.winnerId === -1 || state.phase === 'ready' || state.phase === 'countdown' || (resultsOpen && !inReplay)) {
     feed.classList.add('hidden'); arrivalsShown = 0; return;
   }
   const now = performance.now();
@@ -205,13 +208,28 @@ function updateArrivalsFeed() {
   feed.classList.toggle('hidden', state.freezeTimer > 0);
   const finished = state.phase === 'racing'
     ? state.sortedParticipants.filter(p => p.finished)
-    : state.sortedParticipants.filter(p => p.finishTime !== null && p.finishTime <= state.raceTime + 0.001);
+    : state.sortedParticipants.filter(p => p.finishTime !== null && p.finishTime !== undefined && p.finishTime <= state.raceTime + 0.001);
   document.getElementById('arrivals-count').textContent = `${finished.length.toLocaleString('es-CL')} / ${activeRunners().toLocaleString('es-CL')}`;
+  if (inReplay !== feed._replayMode) {
+    // En la repetición: lista completa en orden de llegada (1°, 2°, 3°...), con scroll
+    feed._replayMode = inReplay;
+    feed.style.pointerEvents = inReplay ? 'auto' : '';
+    listEl.style.maxHeight = inReplay ? 'min(46vh, 420px)' : '';
+    listEl.style.overflowY = inReplay ? 'auto' : '';
+    listEl.classList.toggle('custom-scroll', inReplay);
+    arrivalsShown = -1;
+  }
+  if (inReplay && finished.length === 0) {
+    // Repetición antes de la llegada: todavía no hay nadie en la lista
+    feed.classList.add('hidden'); listEl.innerHTML = ''; arrivalsShown = 0; return;
+  }
+  if (finished.length < arrivalsShown) arrivalsShown = -1;   // la repetición volvió a empezar o se saltó hacia atrás
   if (finished.length === arrivalsShown) return;
-  const prev = arrivalsShown;
+  const prev = Math.max(0, arrivalsShown);
   arrivalsShown = finished.length;
-  const last = finished.slice(-8).reverse();
-  document.getElementById('arrivals-list').innerHTML = last.map(p => {
+  const rows = inReplay ? finished : finished.slice(-8).reverse();
+  const nearBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 40;
+  listEl.innerHTML = rows.map(p => {
     const isNew = p.rank > prev;
     const medal = p.rank === 1 ? '🥇' : p.rank === 2 ? '🥈' : p.rank === 3 ? '🥉' : '';
     return `<div class="${isNew ? 'arr-in ' : ''}flex items-center gap-2 px-2 py-1 rounded-lg bg-slate-900/80">
@@ -220,6 +238,8 @@ function updateArrivalsFeed() {
       <span class="text-sm font-bold text-white truncate">${medal} ${escapeHtml(p.name)}</span>
     </div>`;
   }).join('');
+  // Sigue a los que van llegando, salvo que el usuario haya subido a mirar los primeros
+  if (inReplay && (nearBottom || prev === 0)) listEl.scrollTop = prev === 0 ? 0 : listEl.scrollHeight;
 }
 
 // ---------------- Cartel grande "VA GANANDO" ----------------

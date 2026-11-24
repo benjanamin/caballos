@@ -31,8 +31,15 @@ const replay = {
   top10: [],
   snapshot: null,
   markIdx: 0,
-  winnerCrossT: null
+  winnerCrossT: null,
+  varDone: false,      // ya se mostró la detención VAR en esta pasada
+  freezeUntil: 0,      // detención en la llegada (tiempo real, ms)
+  varGroup: null
 };
+const VAR_FREEZE_MS = 3200;          // cuánto se detiene la imagen mostrando quién ganó
+const VAR_FREEZE_CLOSE_MS = 4200;    // si fue un final peleado (hubo cámara lenta)
+const REPLAY_SLOWMO = 0.25;          // velocidad de la cámara lenta en la repetición
+const REPLAY_SLOWMO_WINDOW = 1.4;    // segundos de carrera antes de la meta que van en cámara lenta
 
 function resetRecorder() {
   stopReplay();
@@ -44,6 +51,7 @@ function resetRecorder() {
   recorder.done = false;
   recorder.lastLapStart = 0;
   recorder.marks = [];
+  recorder.slowMo = false;
   updateReplayButton();
 }
 
@@ -51,6 +59,7 @@ function resetRecorder() {
 function recordRaceSample(force) {
   if (recorder.done || state.phase === 'replay') return;
   if (state.phase !== 'racing' && state.phase !== 'finished') return;
+  if (state.slowMoActive) recorder.slowMo = true;   // el final real tuvo cámara lenta
   if (!force && state.raceTime < recorder.nextT) return;
   if (recorder.times.length && state.raceTime <= recorder.times[recorder.times.length - 1]) return;
   recorder.nextT = state.raceTime + recorder.dt;
@@ -163,10 +172,11 @@ function startReplay(mode) {
   replay.highlight = mode === 'lastlap';
   replay.speed = 1;
   replay.top10 = (replay.snapshot ? replay.snapshot.sorted : state.sortedParticipants).filter(p => !p.elimCause).slice(0, 10);
-  // Última vuelta: termina cuando ya llegó todo el Top 10 (no hace falta ver al resto)
-  const top10Done = replay.top10.reduce((mx, p) => Math.max(mx, p.finishTime || 0), 0);
-  replay.t1 = mode === 'lastlap' && top10Done > 0 ? Math.min(tEnd, top10Done + 2.0) : tEnd;
+  // Se ve hasta que llegan todos, para poder leer la lista de llegadas con calma
+  replay.t1 = tEnd;
   replay.t = replay.t0;
+  endVarFreeze();
+  replay.varDone = false;
   replay.markIdx = recorder.marks.findIndex(mk => mk.t >= replay.t0);
   if (replay.markIdx < 0) replay.markIdx = recorder.marks.length;
   replay.winnerCrossT = state.participants[state.winnerId] ? state.participants[state.winnerId].finishTime : null;
@@ -185,6 +195,8 @@ function startReplay(mode) {
 function stopReplay() {
   if (!replay.active) return;
   replay.active = false;
+  endVarFreeze();
+  setReplaySlowMoUi(false);
   const snap = replay.snapshot;
   if (snap) {
     state.participants.forEach((p, i) => {
@@ -203,11 +215,29 @@ function stopReplay() {
 
 function updateReplay(realDt) {
   if (!replay.active) return;
-  if (!replay.paused) {
-    replay.t += realDt * replay.speed;
+  const cross = replay.winnerCrossT;
+  // Detención VAR en la llegada: la imagen queda quieta unos segundos
+  const frozen = replay.freezeUntil > 0;
+  if (frozen && performance.now() >= replay.freezeUntil) {
+    endVarFreeze();
+    replay.varDone = true;
+  }
+  // Cámara lenta justo antes de la meta, si el final real la tuvo
+  const slow = recorder.slowMo && !replay.varDone && cross !== null && replay.t >= cross - REPLAY_SLOWMO_WINDOW && replay.t < cross;
+  setReplaySlowMoUi(slow);
+  let dtSim = 0;
+  if (!replay.paused && replay.freezeUntil === 0) {
+    const prevT = replay.t;
+    replay.t += realDt * replay.speed * (slow ? REPLAY_SLOWMO : 1);
+    if (!replay.varDone && cross !== null && prevT < cross && replay.t >= cross) {
+      replay.t = cross;
+      dtSim = cross - prevT;
+      startVarFreeze();
+    } else dtSim = replay.t - prevT;
     if (replay.t > replay.t1 + 1.5) {
       if (replay.loop) {
         replay.t = replay.t0;
+        replay.varDone = false;
         replay.markIdx = recorder.marks.findIndex(mk => mk.t >= replay.t0);
         if (replay.markIdx < 0) replay.markIdx = recorder.marks.length;
         resetCameraFollow();
@@ -220,11 +250,12 @@ function updateReplay(realDt) {
     }
   }
   const t = Math.min(replay.t, replay.t1);
-  const dtSim = replay.paused ? 0 : realDt * replay.speed;
   state.raceTime = t;
   applyReplayFrame(t);
-  for (const p of state.participants) {
-    if (!p.eliminated) p.gallopPhase += dtSim * p.speed * (p.state === 'tired' ? 0.56 : 0.68);
+  if (dtSim > 0 && dtSim < 1) {
+    for (const p of state.participants) {
+      if (!p.eliminated) p.gallopPhase += dtSim * p.speed * (p.state === 'tired' ? 0.56 : 0.68);
+    }
   }
   // Rótulos de los eventos que ocurrieron en este tramo
   while (replay.markIdx < recorder.marks.length && recorder.marks[replay.markIdx].t <= t) {
@@ -238,6 +269,7 @@ function updateReplay(realDt) {
 function replayCameraMode(mode) {
   const leader = state.sortedParticipants[0];
   if (!leader) return mode;
+  if (replay.freezeUntil > 0) return 'var';   // detención VAR: toma lateral con las dos líneas
   const L = getTrackMetrics().worldLength;
   const t = replay.t;
   if (replay.winnerCrossT !== null && t >= replay.winnerCrossT) {
@@ -245,7 +277,82 @@ function replayCameraMode(mode) {
   }
   const tLead = (L - (leader.x + NOSE_OFFSET)) / Math.max(4, leader.speed);
   if (tLead < 3.2) return 'finale';
+  // Última vuelta: vista alta siguiendo al ganador (si el usuario no eligió otra cámara)
+  if (replay.mode === 'lastlap' && state.cameraMode === 'auto') return 'overview';
   return mode;
+}
+
+// ---------------- Detención VAR en la llegada ----------------
+function startVarFreeze() {
+  const m = getTrackMetrics();
+  const w = state.participants[state.winnerId];
+  if (!w) return;
+  applyReplayFrame(replay.t);
+  const second = state.sortedParticipants.find(p => p.id !== w.id && !p.eliminated);
+  replay.freezeUntil = performance.now() + (recorder.slowMo ? VAR_FREEZE_CLOSE_MS : VAR_FREEZE_MS);
+  resetCameraFollow();
+  director.cut = true;   // la cámara salta directo a la línea
+
+  // Líneas VAR: una en la nariz del ganador (dorada) y otra en la del segundo (roja), de lado a lado de la pista
+  const g = new THREE.Group();
+  const width = 2 * m.halfWidth + 2;
+  const addLine = (s, color) => {
+    const f = trackPos(s, 0, tmpV1);
+    const rotY = Math.atan2(f.tx, f.tz);
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(width, 4.2),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false }));
+    plane.position.set(tmpV1.x, 2.1, tmpV1.z); plane.rotation.y = rotY;
+    g.add(plane);
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(width, 0.08, 0.16), new THREE.MeshBasicMaterial({ color }));
+    edge.position.set(tmpV1.x, 0.06, tmpV1.z); edge.rotation.y = rotY;
+    g.add(edge);
+    const top = edge.clone(); top.position.y = 4.2; g.add(top);
+    for (const sd of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 4.2, 0.14), new THREE.MeshBasicMaterial({ color }));
+      trackPos(s, sd * width / 2, tmpV2);
+      post.position.set(tmpV2.x, 2.1, tmpV2.z);
+      g.add(post);
+    }
+  };
+  addLine(w.x + NOSE_OFFSET, 0xfbbf24);
+  if (second) addLine(second.x + NOSE_OFFSET, 0xef4444);
+  replay.varS1 = w.x + NOSE_OFFSET;
+  replay.varS2 = second ? second.x + NOSE_OFFSET : replay.varS1;
+  replay.varZ = second ? (w.z + second.z) / 2 : w.z;
+  scene.add(g);
+  replay.varGroup = g;
+
+  // Cartel con el resultado de la revisión
+  let txt = `📏 VAR • 🟨 ${w.name} gana`;
+  if (second) {
+    const gapS = (second.finishTime ?? w.finishTime) - w.finishTime;
+    const gapM = Math.max(0, (w.x - second.x) / m.worldLength * m.meters);
+    txt += ` • 🟥 ${second.name} a ${gapM < 10 ? gapM.toFixed(2) : gapM.toFixed(1)} m (${formatPhotoFinishDiff(gapS)})`;
+  }
+  document.getElementById('photo-card-text').textContent = txt;
+  const card = document.getElementById('photo-card');
+  card.classList.remove('hidden');
+  card.classList.remove('photo-card-in'); void card.offsetWidth; card.classList.add('photo-card-in');
+  flashScreen();
+  audioEngine.playCameraShutter();
+}
+
+function endVarFreeze() {
+  replay.freezeUntil = 0;
+  if (replay.varGroup) {
+    scene.remove(replay.varGroup);
+    replay.varGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    replay.varGroup = null;
+    document.getElementById('photo-card').classList.add('hidden');
+  }
+}
+
+function setReplaySlowMoUi(on) {
+  const el = document.getElementById('slowmo-overlay');
+  if (on === !el.classList.contains('hidden')) return;
+  el.classList.toggle('hidden', !on);
+  el.style.top = on ? '96px' : '';
+  document.getElementById('slowmo-gap-badge').textContent = 'REPETICIÓN';
 }
 
 // Etiquetas: en la última vuelta se resalta al Top 10 final con su puesto final
@@ -310,6 +417,8 @@ function bindReplayUi() {
   seek.addEventListener('input', () => {
     seek._dragging = true;
     replay.t = replay.t0 + (replay.t1 - replay.t0) * (Number(seek.value) / 1000);
+    endVarFreeze();
+    replay.varDone = replay.winnerCrossT !== null && replay.t >= replay.winnerCrossT;   // si salta antes de la meta, vuelve a detenerse en ella
     replay.markIdx = recorder.marks.findIndex(mk => mk.t >= replay.t);
     if (replay.markIdx < 0) replay.markIdx = recorder.marks.length;
     resetCameraFollow();

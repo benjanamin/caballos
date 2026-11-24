@@ -593,6 +593,8 @@ function updateCamera(dt) {
   else if (mode === 'arrivals') targetFov = 44;
   else if (mode === 'event') targetFov = 50;
   else if (mode === 'tv') targetFov = 40;
+  else if (mode === 'overview') targetFov = 58;
+  else if (mode === 'var') targetFov = 42;
   if (Math.abs(camera.fov - targetFov) > 0.05) {
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 3.5);
     camera.updateProjectionMatrix();
@@ -687,6 +689,33 @@ function updateCamera(dt) {
   } else if (mode === 'front') {
     trackToWorld(lx, lx + 14.0 + zoom * 0.6 + camDrag.yawOffset * 0.4, 3.2 + Math.max(-1.0, camDrag.pitchOffset * 0.45), lz + 2.2 + camDrag.yawOffset * 0.5, tmpCamPos);
     trackToWorld(lx, lx - 1.5, 1.6, lz, tmpLookAt);
+  } else if (mode === 'overview') {
+    // Repetición: vista alta que sigue al ganador final, para ver cómo avanzó desde atrás hasta la punta.
+    // Si va detrás del puntero, la toma se abre y retrocede para que entren los dos.
+    const w = state.participants[state.winnerId] || leader;
+    const ahead = smoothTo('ovAhead', leader ? Math.max(0, Math.min(30, leader.x - w.x)) : 0, 0.8, dt);
+    const wz = smoothTo('ovZ', w.z, 1.0, dt);
+    const back = 13 + ahead * 0.35 + zoom * 0.6;
+    anchor = w.x;
+    // Detrás y arriba del ganador, siguiendo la curva de la pista, mirando un poco por delante
+    trackPos(w.x - back + camDrag.yawOffset, Math.max(-maxLat, Math.min(maxLat, wz * 0.7)), tmpCamPos);
+    tmpCamPos.y = 15 + ahead * 0.35 + zoom * 0.4 + camDrag.pitchOffset;
+    trackPos(w.x + 5 + ahead * 0.55, wz * 0.75, tmpLookAt);
+    tmpLookAt.y = 0.8;
+    smooth = 3;
+  } else if (mode === 'var') {
+    // Revisión VAR: toma lateral alta que abarca la línea del ganador y la del segundo
+    const s1 = replay.varS1, s2 = replay.varS2;
+    const mid = (s1 + s2) / 2, gap = Math.abs(s1 - s2);
+    const zc = replay.varZ;
+    const dist = Math.max(12, gap * 1.2 + 9) + zoom * 0.5;
+    const camLat = Math.min(maxLat, zc + dist);
+    // Si no cabe hacia el costado (tribuna), sube para ver las dos líneas desde arriba
+    const camH = 6 + Math.max(0, zc + dist - camLat) * 1.0 + gap * 0.25 + camDrag.pitchOffset * 0.3;
+    anchor = mid; moving = false;
+    trackToWorld(mid, mid + camDrag.yawOffset * 0.3, camH, camLat, tmpCamPos);
+    trackToWorld(mid, mid, 1.3, zc, tmpLookAt);
+    smooth = 6;
   } else if (mode === 'aerial') {
     trackToWorld(lx, lx - 8.0 + camDrag.yawOffset, (metrics.isStampede ? 36 : 23) + zoom * 0.8 + camDrag.pitchOffset, Math.min(maxLat + 10, lz + (metrics.isStampede ? 26 : 15) + zoom * 0.5), tmpCamPos);
     trackToWorld(lx, lx - (metrics.isStampede ? 6 : 0), 1.0, lz * 0.4, tmpLookAt);
