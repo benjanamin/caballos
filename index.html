@@ -4877,7 +4877,8 @@
 
       // ---------------- Director automático de cámara (cortes tipo transmisión) ----------------
       const director = { shot: 'tv', until: 0, idx: 0, cut: false };
-      const DIRECTOR_PLAN = [['tv', 7000], ['front', 4200], ['tv', 6500], ['chase', 3800], ['tv', 6000], ['aerial', 4000]];
+      const FINISH_CAM_SECONDS = 4.5;   // segundos antes de que el puntero cruce la meta para pasar a la cámara de meta
+      const DIRECTOR_PLAN =[['tv', 7000], ['front', 4200], ['tv', 6500], ['chase', 3800], ['tv', 6000], ['aerial', 4000]];
 
       function getDirectedMode() {
         if (state.cameraMode !== 'auto') return state.cameraMode;
@@ -4888,6 +4889,8 @@
         const now = performance.now();
         let want = director.shot;
         if (m.isStampede && state.raceTime < 4.5) want = 'aerial';       // muestra el tamaño de la estampida
+        else if (leader && !leader.finished &&
+                 (m.worldLength - leader.x - NOSE_OFFSET) / Math.max(4, leader.speed) < FINISH_CAM_SECONDS) want = 'finish';   // última vuelta, llegando: cámara de meta
         else if (prog > 0.82 || state.slowMoActive) want = 'tv';          // recta final: siempre la toma lateral
         else if (now >= director.until || director.until === 0) {
           const [shot, dur] = DIRECTOR_PLAN[director.idx % DIRECTOR_PLAN.length];
